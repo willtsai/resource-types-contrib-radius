@@ -4,8 +4,11 @@
 @description('Radius context object passed into the recipe.')
 param context object
 
-@description('Azure Container Apps Environment resource ID. Required.')
-param containerAppsEnvironmentId string
+@description('Azure Container Apps Environment name. Required. The environment must exist in the same subscription and resource group as the deployment.')
+param containerAppsEnvironmentName string
+
+@description('Location for the Container App. Must match the managed environment location. Default: resource group location.')
+param containerAppsLocation string = resourceGroup().location
 
 @description('Enable external ingress (public access). Default: false (internal only)')
 param ingressExternal bool = false
@@ -32,15 +35,32 @@ var applicationName = context.application != null ? context.application.name : '
 // Connections - Generate environment variables from connected resources
 // ============================================================================
 
-var resourceConnections = context.resource.connections ?? {}
-var connectionDefinitions = resourceProperties.connections ?? {}
-var excludedProperties = ['recipe', 'status', 'provisioningState']
+var resourceConnections = context.resource.?connections ?? {}
+var connectionDefinitions = resourceProperties.?connections ?? {}
+var excludedProperties = ['recipe', 'status', 'provisioningState', 'resourceProvisioning']
 
 // Build CONNECTION_<NAME>_<PROPERTY> environment variables from connections
-var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
+// Extracts top-level properties (id, name, type) and also flattens the nested
+// 'properties' object so that e.g. properties.componentName becomes CONNECTION_<NAME>_COMPONENTNAME
+var connectionTopLevelEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
   connectionDefinitions[conn.key].?disableDefaultEnvVars != true
     ? concat(acc, 
         reduce(items(conn.value ?? {}), [], (envAcc, prop) => 
+          contains(excludedProperties, prop.key) || prop.key == 'properties'
+            ? envAcc 
+            : concat(envAcc, [{
+                name: toUpper('CONNECTION_${conn.key}_${prop.key}')
+                value: string(prop.value)
+              }])
+        )
+      )
+    : acc
+)
+
+var connectionNestedEnvVars = reduce(items(resourceConnections), [], (acc, conn) => 
+  connectionDefinitions[conn.key].?disableDefaultEnvVars != true
+    ? concat(acc, 
+        reduce(items(conn.value.?properties ?? {}), [], (envAcc, prop) => 
           contains(excludedProperties, prop.key)
             ? envAcc 
             : concat(envAcc, [{
@@ -51,6 +71,8 @@ var connectionEnvVars = reduce(items(resourceConnections), [], (acc, conn) =>
       )
     : acc
 )
+
+var connectionEnvVars = concat(connectionTopLevelEnvVars, connectionNestedEnvVars)
 
 // ============================================================================
 // Scaling Configuration
@@ -239,14 +261,14 @@ var acaInitContainers = [for item in initContainerItems: union(
 
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
-  location: resourceGroup().location
+  location: containerAppsLocation
   tags: {
-    'radapp.io/application': applicationName
-    'radapp.io/environment': environmentLabel
-    'radapp.io/resource': resourceName
+    'radapp.io-application': applicationName
+    'radapp.io-environment': environmentLabel
+    'radapp.io-resource': resourceName
   }
   properties: {
-    managedEnvironmentId: containerAppsEnvironmentId
+    managedEnvironmentId: resourceId('Microsoft.App/managedEnvironments', containerAppsEnvironmentName)
     configuration: union(
       {
         activeRevisionsMode: 'Single'

@@ -173,18 +173,18 @@ resource myContainer 'Radius.Compute/containers@2025-08-01-preview' = {
 │  ┌───────────────────────────────────────────────────┐  │
 │  │              Container App (Recipe Output)        │  │
 │  │                                                   │  │
-│  │  ┌─────────────┐  ┌─────────────┐                │  │
-│  │  │  Container  │  │  Sidecar    │  (from Radius  │  │
-│  │  │  (main)     │  │  Container  │   containers)  │  │
-│  │  └─────────────┘  └─────────────┘                │  │
+│  │  ┌─────────────┐  ┌─────────────┐                 │  │
+│  │  │  Container  │  │  Sidecar    │  (from Radius   │  │
+│  │  │  (main)     │  │  Container  │   containers)   │  │
+│  │  └─────────────┘  └─────────────┘                 │  │
 │  │                                                   │  │
-│  │  ┌─────────────┐                                 │  │
-│  │  │  Dapr       │  (if extensions.daprSidecar)    │  │
-│  │  │  Sidecar    │                                 │  │
-│  │  └─────────────┘                                 │  │
+│  │  ┌─────────────┐                                  │  │
+│  │  │  Dapr       │  (if extensions.daprSidecar)     │  │
+│  │  │  Sidecar    │                                  │  │
+│  │  └─────────────┘                                  │  │
 │  │                                                   │  │
-│  │  Ingress: internal/external (first port)         │  │
-│  │  Scale: minReplicas → maxReplicas (KEDA)         │  │
+│  │  Ingress: internal/external (first port)          │  │
+│  │  Scale: minReplicas → maxReplicas (KEDA)          │  │
 │  └───────────────────────────────────────────────────┘  │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
