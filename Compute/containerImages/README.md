@@ -1,92 +1,91 @@
 ## Overview
+The Radius.Compute/containerImages Resource Type builds a container image from source and pushes it to a container registry.
 
-The Radius.Compute/containerImages Resource Type builds a container image from source and pushes it to a remote container registry (e.g., ghcr.io). It is always part of a Radius Application.
-
-This resource type is designed for **local development workflows** where the source code is available on the Kubernetes node filesystem (e.g., via kind `extraMounts` or k3d `-v` flags). It uses [BuildKit](https://github.com/moby/buildkit) to build and push the image inside a Kubernetes Job.
+Builds run on the Radius control plane inside the dynamic-rp Pod using a rootless BuildKit sidecar. There is no host Docker socket, no privileged Pod, and no per-node host preparation. The Recipe uses BuildKit by invoking the `buildctl` CLI mounted into the dynamic-rp container; the in-cluster buildkitd sidecar exposes its gRPC API on Pod loopback TCP.
 
 Developer documentation is embedded in the Resource Type definition YAML file. Developer documentation is accessible via `rad resource-type show Radius.Compute/containerImages`.
 
-## Architecture
+## Prerequisites
 
-```
-Host machine                          Kubernetes node
-┌─────────────────────┐              ┌──────────────────────────────┐
-│ ~/dev/myapp/        │  extraMount  │ /app/myapp/                  │
-│   Dockerfile        │ ──────────►  │   Dockerfile                 │
-│   src/              │              │   src/                       │
-└─────────────────────┘              │                              │
-                                     │  Build Job pod:              │
-                                     │  ┌────────────────────────┐  │
-                                     │  │ BuildKit               │  │
-                                     │  │  hostPath: /app/myapp  │  │
-                                     │  │  → builds image        │  │
-                                     │  │  → pushes to registry  │  │
-                                     │  │  (creds from recipe    │  │
-                                     │  │   parameters)          │  │
-                                     │  └────────────────────────┘  │
-                                     └──────────────────────────────┘
+Using the containerImages resource requires platform engineers to configure the containerImages Recipe with the target OCI registry. Developers cannot use containerImages without these steps complete.
+
+1. The Radius Environment or Recipe Pack must define a Recipe parameter `registry` with the target registry prefix images are pushed under. This is a registry hostname optionally followed by a path (e.g. `ghcr.io` or `ghcr.io/my-org`); the recipe appends `/<resource-name>:<tag>` to form the full image reference.
+
+2. If the registry requires authentication, a Radius secret resource must be created, then the `registrySecretName` Recipe parameter set on the Environment or Recipe Pack.
+
+3. If using Kubernetes < 1.30, Radius must be installed with `--set dynamicrp.buildkit.psaMode=baseline`.
+
+For example:
+
+```bicep
+extension radius
+
+param registryUsername string
+@secure()
+param registryPassword string
+
+resource env 'Radius.Core/environments@2025-08-01-preview' = {
+  name: 'default'
+  properties: {
+    recipePacks: [ recipes.id ]
+  }
+}
+
+resource recipes 'Radius.Core/recipePacks@2025-08-01-preview' = {
+  name: 'container-images-recipe'
+  properties: {
+    recipes: {
+      'Radius.Compute/containerImages': {
+        recipeKind: 'terraform'
+        recipeLocation: 'git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform'
+        parameters: {
+          registry: 'ghcr.io/my-org'
+          registrySecretName: 'ghcr-creds'
+        }
+      }
+    }
+  }
+}
+
+resource ghcrCreds 'Radius.Security/secrets@2025-08-01-preview' = {
+  name: 'ghcr-creds'
+  properties: {
+    environment: env.id
+    data: {
+      username: { value: registryUsername }
+      password: { value: registryPassword }
+    }
+  }
+}
 ```
 
 ## Recipes
 
-| Platform | IaC Language | Recipe Name | Stage |
+A list of available Recipes for this Resource Type, including links to the Bicep and Terraform templates:
+
+|Platform| IaC Language| Recipe Name | Stage |
 |---|---|---|---|
-| Kubernetes | Terraform | main.tf | Alpha |
+| Kubernetes | Terraform | recipes/kubernetes/terraform/main.tf | Alpha |
 
-## Recipe Parameters
-
-Registry credentials are configured by the platform engineer when registering the recipe:
-
-```bash
-rad recipe register default \
-  --resource-type Radius.Compute/containerImages \
-  --template-kind terraform \
-  --template-path "git::https://github.com/radius-project/resource-types-contrib.git//Compute/containerImages/recipes/kubernetes/terraform" \
-  --parameters ghcr_username=YOUR_USERNAME \
-  --parameters ghcr_token=YOUR_PAT
-```
-
-| Parameter | Default | Description |
-|---|---|---|
-| `ghcr_server` | `ghcr.io` | Registry server address |
-| `ghcr_username` | `""` | Registry username |
-| `ghcr_token` | `""` | Registry token or PAT (sensitive) |
 
 ## Recipe Input Properties
 
-| Radius Property | Description |
-|---|---|
-| `image` | Full image reference including registry (e.g., `ghcr.io/myorg/myapp:latest`). Must be lowercase. |
-| `build.context` | Host path to source directory (must be available on the Kubernetes node) |
-| `build.dockerfile` | Dockerfile path relative to build context (default: `Dockerfile`) |
-| `registry.server` | (Optional) Override registry server from recipe parameters |
-| `registry.username` | (Optional) Override registry username from recipe parameters |
-| `registry.token` | (Optional) Override registry token from recipe parameters |
+Properties for the containerImages resource are provided to the Recipe via the [Recipe Context](https://docs.radapp.io/reference/context-schema/) object. These properties include:
+
+- `context.resource.properties.build.source` (string, required): The build context. Either a `git::https://...` URL or a local filesystem path to a directory containing the build context.
+- `context.resource.properties.build.dockerfile` (string, optional): Path to the Dockerfile relative to the build context. Defaults to `Dockerfile`.
+- `context.resource.properties.build.platforms` (array of string, optional): Target platforms (e.g. `["linux/amd64", "linux/arm64"]`) for the multi-arch image. Defaults to `["linux/amd64", "linux/arm64"]`. Multi-arch builds require a cross-compile-friendly Dockerfile.
+- `context.resource.properties.build.args` (object, optional): Map of `--build-arg` values passed to the build.
+- `context.resource.properties.tag` (string, optional): Explicit image tag. Defaults to a content-addressable tag (`sha256-<hash>`) derived from the build inputs (source URL or file tree, dockerfile path, platforms, build args).
+
+The Recipe is also parameterized at registration time by the platform engineer with:
+
+- `registry` (string, required): The registry prefix images are pushed under (e.g. `ghcr.io/myorg`). The recipe composes `<registry>/<resource-name>:<tag>` to form the full image reference.
+- `registrySecretName` (string, optional): Name of a Kubernetes Secret in the environment namespace (typically materialized by a `Radius.Security/secrets` resource of `kind: generic` with `username` and `password` keys). Omit for unauthenticated registries.
+
 
 ## Recipe Output Properties
 
-There are no output properties that need to be set by the Recipe.
+The Kubernetes recipe emits the following output values:
 
-## Limitations
-
-- **Local development only**: Requires `hostPath` access to source code on the Kubernetes node. This works with kind (`extraMounts`), k3d (`-v` flags), Docker Desktop, and similar local Kubernetes distributions. It does not work with remote clusters unless the source is available on the node filesystem.
-
-- **Privileged container**: BuildKit requires `securityContext.privileged: true`. Clusters with restrictive PodSecurityAdmission policies may block this. Consider using [BuildKit rootless mode](https://github.com/moby/buildkit/blob/master/docs/rootless.md) for environments that do not allow privileged containers.
-
-- **Single-node clusters**: The Job is scheduled on any node. In multi-node clusters, the `hostPath` mount may not be available on the scheduled node. Use a single-node cluster or node affinity to ensure correct scheduling.
-
-- **RBAC**: The `dynamic-rp` service account requires `batch/jobs` permissions. This must be configured by the platform engineer:
-
-  ```bash
-  kubectl patch clusterrole dynamic-rp --type=json -p='[
-    {
-      "op": "add",
-      "path": "/rules/-",
-      "value": {
-        "apiGroups": ["batch"],
-        "resources": ["jobs", "jobs/status"],
-        "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
-      }
-    }
-  ]'
-  ```
+- `imageReference` (string): The full resolved image reference, e.g. `ghcr.io/myorg/myimage:v1.2.3`. Reference this from `Radius.Compute/containers` resources via a Radius connection.

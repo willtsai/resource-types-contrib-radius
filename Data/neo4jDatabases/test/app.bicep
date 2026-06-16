@@ -1,4 +1,5 @@
 extension radius
+extension neo4jDatabases
 
 @description('The Radius environment ID')
 param environment string
@@ -8,25 +9,8 @@ param password string
 
 resource myapp 'Radius.Core/applications@2025-08-01-preview' = {
   name: 'myapp'
-  location: 'global'
   properties: {
     environment: environment
-  }
-}
-
-resource dbSecret 'Radius.Security/secrets@2025-08-01-preview' = {
-  name: 'dbsecret'
-  properties: {
-    environment: environment
-    application: myapp.id
-    data: {
-      USERNAME: {
-        value: 'admin'
-      }
-      PASSWORD: {
-        value: password
-      }
-    }
   }
 }
 
@@ -46,18 +30,34 @@ resource mycontainer 'Radius.Compute/containers@2025-08-01-preview' = {
       }
     }
     connections: {
-      mysql: {
-        source: mysql.id
+      neo4j: {
+        source: neo4j.id
       }
     }
   }
 }
 
-resource mysql 'Radius.Data/mySqlDatabases@2025-08-01-preview' = {
-  name: 'mysql'
+resource neo4j 'Radius.Data/neo4jDatabases@2025-09-11-preview' = {
+  name: 'neo4j'
   properties: {
     environment: environment
     application: myapp.id
     secretName: dbSecret.name
+  }
+}
+
+resource dbSecret 'Radius.Security/secrets@2025-08-01-preview' = {
+  name: 'dbsecret'
+  properties: {
+    environment: environment
+    application: myapp.id
+    data: {
+      USERNAME: {
+        value: 'neo4j'
+      }
+      PASSWORD: {
+        value: password
+      }
+    }
   }
 }

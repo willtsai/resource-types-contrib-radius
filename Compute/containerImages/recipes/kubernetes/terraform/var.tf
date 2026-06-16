@@ -1,10 +1,16 @@
 variable "context" {
-  description = "This variable contains Radius recipe context."
+  description = "Radius recipe context. Carries resource properties, environment, and runtime info."
   type        = any
+  default     = null
 }
 
-variable "registry_server" {
-  description = "Registry server address for authentication. Defaults to ghcr.io."
+variable "registry" {
+  description = "Default registry path (e.g. `ghcr.io/myorg`) into which images are pushed."
   type        = string
-  default     = "ghcr.io"
+}
+
+variable "registrySecretName" {
+  description = "Name of the Kubernetes Secret holding the registry credentials. Supplied by the platform engineer as a recipe-pack parameter, typically as `ghcrCreds.name` referencing a `Radius.Security/secrets` resource whose recipe materializes a same-named Secret in the environment namespace. The Secret must contain string keys `username` and `password`. Leave empty for an unauthenticated registry."
+  type        = string
+  default     = ""
 }
